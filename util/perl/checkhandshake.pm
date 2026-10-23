@@ -1,7 +1,7 @@
 #! /usr/bin/env perl
 # Copyright 2015-2018 The OpenSSL Project Authors. All Rights Reserved.
 #
-# Licensed under the OpenSSL license (the "License").  You may not use
+# Licensed under the Apache License 2.0 (the "License").  You may not use
 # this file except in compliance with the License.  You can obtain a copy
 # in the file LICENSE in the source distribution or at
 # https://www.openssl.org/source/license.html
@@ -26,8 +26,11 @@ use constant {
     EC_HANDSHAKE => 64,
     HRR_HANDSHAKE => 128,
     HRR_RESUME_HANDSHAKE => 256,
+    CERT_COMP_SRV_HANDSHAKE => 512,
+    CERT_COMP_CLI_HANDSHAKE => 1024,
+    CERT_COMP_BOTH_HANDSHAKE => 2048,
 
-    ALL_HANDSHAKES => 511
+    ALL_HANDSHAKES => 4095
 };
 
 use constant {
@@ -54,7 +57,10 @@ use constant {
     PSK_KEX_MODES_EXTENSION => 0x00040000,
     KEY_SHARE_HRR_EXTENSION => 0x00080000,
     SUPPORTED_GROUPS_SRV_EXTENSION => 0x00100000,
-    POST_HANDSHAKE_AUTH_CLI_EXTENSION => 0x00200000
+    POST_HANDSHAKE_AUTH_CLI_EXTENSION => 0x00200000,
+    CERT_COMP_CLI_EXTENSION => 0x00400000,
+    CERT_COMP_SRV_EXTENSION => 0x00800000,
+    COOKIE_EXTENSION => 0x01000000
 };
 
 our @handmessages = ();
@@ -63,6 +69,19 @@ our @extensions = ();
 sub checkhandshake($$$$)
 {
     my ($proxy, $handtype, $exttype, $testname) = @_;
+    my $msgs = \@handmessages;
+
+    # s_server validates DTLS peers with a HelloRetryRequest cookie, so every
+    # DTLS handshake exchanges the HRR messages and the cookie extension
+    if ($proxy->isdtls()) {
+        $msgs = [map {
+            [$_->[0],
+             $_->[1] != 0
+             && ($_->[1] & ~(HRR_HANDSHAKE | HRR_RESUME_HANDSHAKE)) == 0
+                 ? ALL_HANDSHAKES : $_->[1]]
+        } @handmessages];
+        $exttype |= COOKIE_EXTENSION;
+    }
 
     subtest $testname => sub {
         my $loop = 0;
@@ -74,11 +93,11 @@ sub checkhandshake($$$$)
         my $numsh = 0;
         if (TLSProxy::Proxy::is_tls13()) {
             #How many ServerHellos are we expecting?
-            for ($numtests = 0; $handmessages[$loop][1] != 0; $loop++) {
-                next if (($handmessages[$loop][1] & $handtype) == 0);
+            for ($numtests = 0; $msgs->[$loop][1] != 0; $loop++) {
+                next if (($msgs->[$loop][1] & $handtype) == 0);
                 $numsh++ if ($lastmt != TLSProxy::Message::MT_SERVER_HELLO
-                             && $handmessages[$loop][0] == TLSProxy::Message::MT_SERVER_HELLO);
-                $lastmt = $handmessages[$loop][0];
+                             && $msgs->[$loop][0] == TLSProxy::Message::MT_SERVER_HELLO);
+                $lastmt = $msgs->[$loop][0];
             }
         }
 
@@ -97,8 +116,8 @@ sub checkhandshake($$$$)
         #first ServerHello in the list completely
         $shnum++ if ($numsh == 1 && TLSProxy::Proxy::is_tls13());
         $loop = 0;
-        for ($numtests = 0; $handmessages[$loop][1] != 0; $loop++) {
-            next if (($handmessages[$loop][1] & $handtype) == 0);
+        for ($numtests = 0; $msgs->[$loop][1] != 0; $loop++) {
+            next if (($msgs->[$loop][1] & $handtype) == 0);
             if (scalar @{$proxy->message_list} > $nextmess) {
                 $message = ${$proxy->message_list}[$nextmess];
                 $nextmess++;
@@ -116,7 +135,8 @@ sub checkhandshake($$$$)
                     && $message->mt() != TLSProxy::Message::MT_SERVER_HELLO
                     && $message->mt() !=
                        TLSProxy::Message::MT_ENCRYPTED_EXTENSIONS
-                    && $message->mt() != TLSProxy::Message::MT_CERTIFICATE);
+                    && $message->mt() != TLSProxy::Message::MT_CERTIFICATE
+                    && $message->mt() != TLSProxy::Message::MT_CERTIFICATE_REQUEST);
 
             next if $message->mt() == TLSProxy::Message::MT_CERTIFICATE
                     && !TLSProxy::Proxy::is_tls13();
@@ -124,7 +144,7 @@ sub checkhandshake($$$$)
             my $extchnum = 1;
             my $extshnum = 1;
             for (my $extloop = 0;
-                    $extensions[$extloop][2] != 0;
+                    $extensions[$extloop][3] != 0;
                     $extloop++) {
                 $extchnum = 2 if $extensions[$extloop][0] != TLSProxy::Message::MT_CLIENT_HELLO
                                  && TLSProxy::Proxy::is_tls13();
@@ -135,6 +155,7 @@ sub checkhandshake($$$$)
                 next if $extensions[$extloop][0] == TLSProxy::Message::MT_SERVER_HELLO
                                  && $extshnum != $shnum;
                 next if ($message->mt() != $extensions[$extloop][0]);
+                next if ($message->server() != $extensions[$extloop][2]);
                 $numtests++;
             }
             $numtests++;
@@ -156,8 +177,8 @@ sub checkhandshake($$$$)
         #If we're only expecting one ServerHello out of two then we skip the
         #first ServerHello in the list completely
         $shnum++ if ($numsh == 1 && TLSProxy::Proxy::is_tls13());
-        for ($loop = 0; $handmessages[$loop][1] != 0; $loop++) {
-            next if (($handmessages[$loop][1] & $handtype) == 0);
+        for ($loop = 0; $msgs->[$loop][1] != 0; $loop++) {
+            next if (($msgs->[$loop][1] & $handtype) == 0);
             if (scalar @{$proxy->message_list} > $nextmess) {
                 $message = ${$proxy->message_list}[$nextmess];
                 $nextmess++;
@@ -166,12 +187,12 @@ sub checkhandshake($$$$)
             }
             if (!defined $message) {
                 fail("Message type check. Got nothing, expected "
-                     .$handmessages[$loop][0]);
+                     .$msgs->[$loop][0]);
                 next;
             } else {
-                ok($message->mt == $handmessages[$loop][0],
+                ok($message->mt == $msgs->[$loop][0],
                    "Message type check. Got ".$message->mt
-                   .", expected ".$handmessages[$loop][0]);
+                   .", expected ".$msgs->[$loop][0]);
             }
             if (TLSProxy::Proxy::is_tls13()) {
                 $chnum++ if $message->mt() == TLSProxy::Message::MT_CLIENT_HELLO;
@@ -182,7 +203,8 @@ sub checkhandshake($$$$)
                     && $message->mt() != TLSProxy::Message::MT_SERVER_HELLO
                     && $message->mt() !=
                        TLSProxy::Message::MT_ENCRYPTED_EXTENSIONS
-                    && $message->mt() != TLSProxy::Message::MT_CERTIFICATE);
+                    && $message->mt() != TLSProxy::Message::MT_CERTIFICATE
+                    && $message->mt() != TLSProxy::Message::MT_CERTIFICATE_REQUEST);
 
             next if $message->mt() == TLSProxy::Message::MT_CERTIFICATE
                     && !TLSProxy::Proxy::is_tls13();
@@ -197,7 +219,7 @@ sub checkhandshake($$$$)
             my $msgexts = $message->extension_data();
             my $extchnum = 1;
             my $extshnum = 1;
-            for (my $extloop = 0, $extcount = 0; $extensions[$extloop][2] != 0;
+            for (my $extloop = 0, $extcount = 0; $extensions[$extloop][3] != 0;
                                 $extloop++) {
                 #In TLSv1.3 we can have two ClientHellos if there has been a
                 #HelloRetryRequest, and they may have different extensions. Skip
@@ -211,12 +233,13 @@ sub checkhandshake($$$$)
                 next if $extensions[$extloop][0] == TLSProxy::Message::MT_SERVER_HELLO
                                  && $extshnum != $shnum;
                 next if ($message->mt() != $extensions[$extloop][0]);
-                ok (($extensions[$extloop][2] & $exttype) == 0
+                next if ($message->server() != $extensions[$extloop][2]);
+                ok (($extensions[$extloop][3] & $exttype) == 0
                       || defined ($msgexts->{$extensions[$extloop][1]}),
                     "Extension presence check (Message: ".$message->mt()
-                    ." Extension: ".($extensions[$extloop][2] & $exttype).", "
+                    ." Extension: ".($extensions[$extloop][3] & $exttype).", "
                     .$extloop.")");
-                $extcount++ if (($extensions[$extloop][2] & $exttype) != 0);
+                $extcount++ if (($extensions[$extloop][3] & $exttype) != 0);
             }
             ok($extcount == keys %$msgexts, "Extensions count mismatch ("
                                             .$extcount.", ".(keys %$msgexts)

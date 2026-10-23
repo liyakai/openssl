@@ -1,20 +1,30 @@
 /*
- * Copyright 1995-2017 The OpenSSL Project Authors. All Rights Reserved.
+ * Copyright 1995-2026 The OpenSSL Project Authors. All Rights Reserved.
  *
- * Licensed under the OpenSSL license (the "License").  You may not use
+ * Licensed under the Apache License 2.0 (the "License").  You may not use
  * this file except in compliance with the License.  You can obtain a copy
  * in the file LICENSE in the source distribution or at
  * https://www.openssl.org/source/license.html
  */
 
 #include "internal/cryptlib.h"
-#include "bn_lcl.h"
+#include "bn_local.h"
 
 /* r must not be a */
 /*
  * I've just gone over this and it is now %20 faster on x86 - eay - 27 Jun 96
  */
 int BN_sqr(BIGNUM *r, const BIGNUM *a, BN_CTX *ctx)
+{
+    int ret = bn_sqr_fixed_top(r, a, ctx);
+
+    bn_correct_top(r);
+    bn_check_top(r);
+
+    return ret;
+}
+
+int bn_sqr_fixed_top(BIGNUM *r, const BIGNUM *a, BN_CTX *ctx)
 {
     int max, al;
     int ret = 0;
@@ -35,26 +45,30 @@ int BN_sqr(BIGNUM *r, const BIGNUM *a, BN_CTX *ctx)
     if (rr == NULL || tmp == NULL)
         goto err;
 
-    max = 2 * al;               /* Non-zero (from above) */
+    max = 2 * al; /* Non-zero (from above) */
     if (bn_wexpand(rr, max) == NULL)
         goto err;
 
     if (al == 4) {
-#ifndef BN_SQR_COMBA
+#ifdef OPENSSL_SMALL_FOOTPRINT
         BN_ULONG t[8];
         bn_sqr_normal(rr->d, a->d, 4, t);
 #else
         bn_sqr_comba4(rr->d, a->d);
 #endif
     } else if (al == 8) {
-#ifndef BN_SQR_COMBA
+#ifdef OPENSSL_SMALL_FOOTPRINT
         BN_ULONG t[16];
         bn_sqr_normal(rr->d, a->d, 8, t);
 #else
         bn_sqr_comba8(rr->d, a->d);
 #endif
     } else {
-#if defined(BN_RECURSION)
+#ifdef OPENSSL_SMALL_FOOTPRINT
+        if (bn_wexpand(tmp, max) == NULL)
+            goto err;
+        bn_sqr_normal(rr->d, a->d, al, tmp->d);
+#else
         if (al < BN_SQR_RECURSIVE_SIZE_NORMAL) {
             BN_ULONG t[BN_SQR_RECURSIVE_SIZE_NORMAL * 2];
             bn_sqr_normal(rr->d, a->d, al, t);
@@ -74,27 +88,17 @@ int BN_sqr(BIGNUM *r, const BIGNUM *a, BN_CTX *ctx)
                 bn_sqr_normal(rr->d, a->d, al, tmp->d);
             }
         }
-#else
-        if (bn_wexpand(tmp, max) == NULL)
-            goto err;
-        bn_sqr_normal(rr->d, a->d, al, tmp->d);
 #endif
     }
 
     rr->neg = 0;
-    /*
-     * If the most-significant half of the top word of 'a' is zero, then the
-     * square of 'a' will max-1 words.
-     */
-    if (a->d[al - 1] == (a->d[al - 1] & BN_MASK2l))
-        rr->top = max - 1;
-    else
-        rr->top = max;
+    rr->top = max;
+    rr->flags |= BN_FLG_FIXED_TOP;
     if (r != rr && BN_copy(r, rr) == NULL)
         goto err;
 
     ret = 1;
- err:
+err:
     bn_check_top(rr);
     bn_check_top(tmp);
     BN_CTX_end(ctx);
@@ -137,7 +141,7 @@ void bn_sqr_normal(BN_ULONG *r, const BN_ULONG *a, int n, BN_ULONG *tmp)
     bn_add_words(r, r, tmp, max);
 }
 
-#ifdef BN_RECURSION
+#ifndef OPENSSL_SMALL_FOOTPRINT
 /*-
  * r is 2*n words in size,
  * a and b are both n words in size.    (There's not actually a 'b' here ...)
@@ -156,18 +160,10 @@ void bn_sqr_recursive(BN_ULONG *r, const BN_ULONG *a, int n2, BN_ULONG *t)
     BN_ULONG ln, lo, *p;
 
     if (n2 == 4) {
-# ifndef BN_SQR_COMBA
-        bn_sqr_normal(r, a, 4, t);
-# else
         bn_sqr_comba4(r, a);
-# endif
         return;
     } else if (n2 == 8) {
-# ifndef BN_SQR_COMBA
-        bn_sqr_normal(r, a, 8, t);
-# else
         bn_sqr_comba8(r, a);
-# endif
         return;
     }
     if (n2 < BN_SQR_RECURSIVE_SIZE_NORMAL) {

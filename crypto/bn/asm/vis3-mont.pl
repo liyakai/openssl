@@ -1,17 +1,17 @@
 #! /usr/bin/env perl
-# Copyright 2012-2016 The OpenSSL Project Authors. All Rights Reserved.
+# Copyright 2012-2026 The OpenSSL Project Authors. All Rights Reserved.
 #
-# Licensed under the OpenSSL license (the "License").  You may not use
+# Licensed under the Apache License 2.0 (the "License").  You may not use
 # this file except in compliance with the License.  You can obtain a copy
 # in the file LICENSE in the source distribution or at
 # https://www.openssl.org/source/license.html
 
 
 # ====================================================================
-# Written by Andy Polyakov <appro@openssl.org> for the OpenSSL
+# Written by Andy Polyakov, @dot-asm, initially for use in the OpenSSL
 # project. The module is, however, dual licensed under OpenSSL and
 # CRYPTOGAMS licenses depending on where you obtain it. For further
-# details see http://www.openssl.org/~appro/cryptogams/.
+# details see https://github.com/dot-asm/cryptogams/.
 # ====================================================================
 
 # October 2012.
@@ -25,14 +25,16 @@
 # for reference purposes, because T4 has dedicated Montgomery
 # multiplication and squaring *instructions* that deliver even more.
 
-$output = pop;
-open STDOUT,">$output";
+$output = pop and open STDOUT,">$output";
 
 $frame = "STACK_FRAME";
 $bias = "STACK_BIAS";
 
 $code.=<<___;
-#include "sparc_arch.h"
+#ifndef __ASSEMBLER__
+# define __ASSEMBLER__ 1
+#endif
+#include "arch/sparc_arch.h"
 
 #ifdef	__arch64__
 .register	%g2,#scratch
@@ -310,23 +312,23 @@ $code.=<<___;
 	sub	$anp,	$num,	$anp
 	sub	$rp,	$num,	$rp
 
-	subc	$ovf,	%g0,	$ovf	! handle upmost overflow bit
-	and	$tp,	$ovf,	$ap
-	andn	$rp,	$ovf,	$np
-	or	$np,	$ap,	$ap	! ap=borrow?tp:rp
+	subccc	$ovf,	%g0,	$ovf	! handle upmost overflow bit
 	ba	.Lcopy
 	sub	$num,	8,	$cnt
 
 .align	16
-.Lcopy:					! copy or in-place refresh
-	ld	[$ap+0],	$t2
-	ld	[$ap+4],	$t3
-	add	$ap,	8,	$ap
+.Lcopy:					! conditional copy
+	ld	[$tp+0],	$t0
+	ld	[$tp+4],	$t1
+	ld	[$rp+0],	$t2
+	ld	[$rp+4],	$t3
 	stx	%g0,	[$tp]		! zap
 	add	$tp,	8,	$tp
 	stx	%g0,	[$anp]		! zap
 	stx	%g0,	[$anp+8]
 	add	$anp,	16,	$anp
+	movcs	%icc,	$t0,	$t2
+	movcs	%icc,	$t1,	$t3
 	st	$t3,	[$rp+0]		! flip order
 	st	$t2,	[$rp+4]
 	add	$rp,	8,	$rp
@@ -338,7 +340,7 @@ $code.=<<___;
 	restore
 .type	bn_mul_mont_vis3, #function
 .size	bn_mul_mont_vis3, .-bn_mul_mont_vis3
-.asciz  "Montgomery Multiplication for SPARCv9 VIS3, CRYPTOGAMS by <appro\@openssl.org>"
+.asciz  "Montgomery Multiplication for SPARCv9 VIS3, CRYPTOGAMS by <https://github.com/dot-asm>"
 .align	4
 ___
 
@@ -381,4 +383,4 @@ foreach (split("\n",$code)) {
 	print $_,"\n";
 }
 
-close STDOUT;
+close STDOUT or die "error closing STDOUT: $!";

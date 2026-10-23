@@ -1,17 +1,17 @@
 #! /usr/bin/env perl
-# Copyright 2010-2016 The OpenSSL Project Authors. All Rights Reserved.
+# Copyright 2010-2025 The OpenSSL Project Authors. All Rights Reserved.
 #
-# Licensed under the OpenSSL license (the "License").  You may not use
+# Licensed under the Apache License 2.0 (the "License").  You may not use
 # this file except in compliance with the License.  You can obtain a copy
 # in the file LICENSE in the source distribution or at
 # https://www.openssl.org/source/license.html
 
 #
 # ====================================================================
-# Written by Andy Polyakov <appro@openssl.org> for the OpenSSL
+# Written by Andy Polyakov, @dot-asm, initially for use in the OpenSSL
 # project. The module is, however, dual licensed under OpenSSL and
 # CRYPTOGAMS licenses depending on where you obtain it. For further
-# details see http://www.openssl.org/~appro/cryptogams/.
+# details see https://github.com/dot-asm/cryptogams/.
 # ====================================================================
 
 # January 2010
@@ -67,7 +67,8 @@
 # hereafter less for longer keys, while verify - by 74-13%.
 # DSA performance improves by 115-30%.
 
-$output=pop;
+# $output is the last argument if it looks like a file (it has an extension)
+$output = $#ARGV >= 0 && $ARGV[$#ARGV] =~ m|\.\w+$| ? pop : undef;
 
 if ($^O eq "hpux") {
     $ADDP="addp4";
@@ -341,19 +342,19 @@ bn_mul_mont_general:
 { .mmb;	sub	rptr=rptr,len		// rewind
 	sub	tptr=tptr,len
 	clrrrb.pr			};;
-{ .mmi;	and	aptr=tptr,topbit
-	andcm	bptr=rptr,topbit
+{ .mmi;	mov	aptr=rptr
+	mov	bptr=tptr
 	mov	pr.rot=1<<16		};;
-{ .mii;	or	nptr=aptr,bptr
+{ .mii;	cmp.eq	p0,p6=topbit,r0
 	mov	ar.lc=lc
-	mov	ar.ec=3			};;
+	mov	ar.ec=2			};;
 
 .Lcopy_ctop:
-{ .mmb;	(p16)	ld8	n[0]=[nptr],8
-	(p18)	st8	[tptr]=r0,8
-	(p16)	nop.b	0		}
-{ .mmb;	(p16)	nop.m	0
-	(p18)	st8	[rptr]=n[2],8
+{ .mmi;	(p16)	ld8	a[0]=[aptr],8
+	(p16)	ld8	t[0]=[bptr],8
+	(p6)	mov	a[1]=t[1]	};;	// (p17)
+{ .mmb;	(p17)	st8	[rptr]=a[1],8
+	(p17)	st8	[tptr]=r0,8
 	br.ctop.sptk	.Lcopy_ctop	};;
 .Lcopy_cend:
 
@@ -852,9 +853,9 @@ bn_mul_mont_8:
 
 .type	copyright#,\@object
 copyright:
-stringz	"Montgomery multiplication for IA-64, CRYPTOGAMS by <appro\@openssl.org>"
+stringz	"Montgomery multiplication for IA-64, CRYPTOGAMS by <https://github.com/dot-asm>"
 ___
 
 open STDOUT,">$output" if $output;
 print $code;
-close STDOUT;
+close STDOUT or die "error closing STDOUT: $!";

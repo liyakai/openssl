@@ -1,19 +1,19 @@
 #!/usr/bin/env perl
-# Copyright 2018 The OpenSSL Project Authors. All Rights Reserved.
+# Copyright 2018-2026 The OpenSSL Project Authors. All Rights Reserved.
 #
-# Licensed under the OpenSSL license (the "License").  You may not use
+# Licensed under the Apache License 2.0 (the "License").  You may not use
 # this file except in compliance with the License.  You can obtain a copy
 # in the file LICENSE in the source distribution or at
 # https://www.openssl.org/source/license.html
 #
 # ====================================================================
-# Written by Andy Polyakov <appro@openssl.org> for the OpenSSL
+# Written by Andy Polyakov, @dot-asm, initially for use in the OpenSSL
 # project. The module is, however, dual licensed under OpenSSL and
 # CRYPTOGAMS licenses depending on where you obtain it. For further
-# details see http://www.openssl.org/~appro/cryptogams/.
+# details see https://github.com/dot-asm/cryptogams/.
 # ====================================================================
 #
-# X25519 lower-level primitives for x86_86.
+# X25519 lower-level primitives for x86_64.
 #
 # February 2018.
 #
@@ -61,9 +61,10 @@
 #	C implementation, so that comparison is always against
 #	2^51 radix;
 
-$flavour = shift;
-$output  = shift;
-if ($flavour =~ /\./) { $output = $flavour; undef $flavour; }
+# $output is the last argument if it looks like a file (it has an extension)
+# $flavour is the first argument if it doesn't look like a file
+$output = $#ARGV >= 0 && $ARGV[$#ARGV] =~ m|\.\w+$| ? pop : undef;
+$flavour = $#ARGV >= 0 && $ARGV[0] !~ m|\.| ? shift : undef;
 
 $win64=0; $win64=1 if ($flavour =~ /[nm]asm|mingw64/ || $output =~ /\.asm$/);
 
@@ -72,7 +73,8 @@ $0 =~ m/(.*[\/\\])[^\/\\]+$/; $dir=$1;
 ( $xlate="${dir}../../perlasm/x86_64-xlate.pl" and -f $xlate) or
 die "can't locate x86_64-xlate.pl";
 
-open OUT,"| \"$^X\" \"$xlate\" $flavour \"$output\"";
+open OUT,"| \"$^X\" \"$xlate\" $flavour \"$output\""
+    or die "can't call $xlate: $!";
 *STDOUT=*OUT;
 
 if (`$ENV{CC} -Wa,-v -c -o /dev/null -x assembler /dev/null 2>&1`
@@ -90,9 +92,16 @@ if (!$addx && $win64 && ($flavour =~ /masm/ || $ENV{ASM} =~ /ml64/) &&
 	$addx = ($1>=12);
 }
 
-if (!$addx && `$ENV{CC} -v 2>&1` =~ /((?:^clang|LLVM) version|.*based on LLVM) ([3-9])\.([0-9]+)/) {
+if (!$addx && `$ENV{CC} -v 2>&1` =~ /((?:clang|LLVM) version|.*based on LLVM) ([0-9]+)\.([0-9]+)/) {
 	my $ver = $2 + $3/100.0;	# 3.1->3.01, 3.10->3.10
 	$addx = ($ver>=3.03);
+}
+
+if (!$addx && `$ENV{CC} -x c /dev/null -dM -E|grep __clang_major__`
+	=~ /#define __clang_major__.([0-9]+)/) {
+	if ($1) {
+		$addx = ($1>=11); #icx started with clang 11
+	}
 }
 
 $code.=<<___;
@@ -102,13 +111,22 @@ $code.=<<___;
 .type	x25519_fe51_mul,\@function,3
 .align	32
 x25519_fe51_mul:
+.cfi_startproc
 	push	%rbp
+.cfi_push	%rbp
 	push	%rbx
+.cfi_push	%rbx
 	push	%r12
+.cfi_push	%r12
 	push	%r13
+.cfi_push	%r13
 	push	%r14
+.cfi_push	%r14
 	push	%r15
+.cfi_push	%r15
 	lea	-8*5(%rsp),%rsp
+.cfi_adjust_cfa_offset	40
+.Lfe51_mul_body:
 
 	mov	8*0(%rsi),%rax		# f[0]
 	mov	8*0(%rdx),%r11		# load g[0-4]
@@ -236,19 +254,30 @@ x25519_fe51_mul:
 
 	mov	8*4(%rsp),%rdi		# restore 1st argument
 	jmp	.Lreduce51
+.Lfe51_mul_epilogue:
+.cfi_endproc
 .size	x25519_fe51_mul,.-x25519_fe51_mul
 
 .globl	x25519_fe51_sqr
 .type	x25519_fe51_sqr,\@function,2
 .align	32
 x25519_fe51_sqr:
+.cfi_startproc
 	push	%rbp
+.cfi_push	%rbp
 	push	%rbx
+.cfi_push	%rbx
 	push	%r12
+.cfi_push	%r12
 	push	%r13
+.cfi_push	%r13
 	push	%r14
+.cfi_push	%r14
 	push	%r15
+.cfi_push	%r15
 	lea	-8*5(%rsp),%rsp
+.cfi_adjust_cfa_offset	40
+.Lfe51_sqr_body:
 
 	mov	8*0(%rsi),%rax		# g[0]
 	mov	8*2(%rsi),%r15		# g[2]
@@ -391,27 +420,45 @@ x25519_fe51_sqr:
 	mov	%r10,8*4(%rdi)
 
 	mov	8*5(%rsp),%r15
+.cfi_restore	%r15
 	mov	8*6(%rsp),%r14
+.cfi_restore	%r14
 	mov	8*7(%rsp),%r13
+.cfi_restore	%r13
 	mov	8*8(%rsp),%r12
+.cfi_restore	%r12
 	mov	8*9(%rsp),%rbx
+.cfi_restore	%rbx
 	mov	8*10(%rsp),%rbp
+.cfi_restore	%rbp
 	lea	8*11(%rsp),%rsp
+.cfi_adjust_cfa_offset	88
+.Lfe51_sqr_epilogue:
 	ret
+.cfi_endproc
 .size	x25519_fe51_sqr,.-x25519_fe51_sqr
 
 .globl	x25519_fe51_mul121666
 .type	x25519_fe51_mul121666,\@function,2
 .align	32
 x25519_fe51_mul121666:
+.cfi_startproc
 	push	%rbp
+.cfi_push	%rbp
 	push	%rbx
+.cfi_push	%rbx
 	push	%r12
+.cfi_push	%r12
 	push	%r13
+.cfi_push	%r13
 	push	%r14
+.cfi_push	%r14
 	push	%r15
-	mov	\$121666,%eax
+.cfi_push	%r15
 	lea	-8*5(%rsp),%rsp
+.cfi_adjust_cfa_offset	40
+.Lfe51_mul121666_body:
+	mov	\$121666,%eax
 
 	mulq	8*0(%rsi)
 	mov	%rax,%rbx		# %rbx:%rcx = h0
@@ -434,6 +481,8 @@ x25519_fe51_mul121666:
 	mov	%rdx,%r15
 
 	jmp	.Lreduce51
+.Lfe51_mul121666_epilogue:
+.cfi_endproc
 .size	x25519_fe51_mul121666,.-x25519_fe51_mul121666
 ___
 ########################################################################
@@ -448,26 +497,38 @@ $code.=<<___;
 .type	x25519_fe64_eligible,\@abi-omnipotent
 .align	32
 x25519_fe64_eligible:
+.cfi_startproc
 	mov	OPENSSL_ia32cap_P+8(%rip),%ecx
 	xor	%eax,%eax
 	and	\$0x80100,%ecx
 	cmp	\$0x80100,%ecx
 	cmove	%ecx,%eax
 	ret
+.cfi_endproc
 .size	x25519_fe64_eligible,.-x25519_fe64_eligible
 
 .globl	x25519_fe64_mul
 .type	x25519_fe64_mul,\@function,3
 .align	32
 x25519_fe64_mul:
+.cfi_startproc
 	push	%rbp
+.cfi_push	%rbp
 	push	%rbx
+.cfi_push	%rbx
 	push	%r12
+.cfi_push	%r12
 	push	%r13
+.cfi_push	%r13
 	push	%r14
+.cfi_push	%r14
 	push	%r15
+.cfi_push	%r15
 	push	%rdi			# offload dst
+.cfi_push	%rdi
 	lea	-8*2(%rsp),%rsp
+.cfi_adjust_cfa_offset	16
+.Lfe64_mul_body:
 
 	mov	%rdx,%rax
 	mov	8*0(%rdx),%rbp		# b[0]
@@ -534,20 +595,32 @@ x25519_fe64_mul:
 	adox	%rdi,$acc7		# of=0
 
 	jmp	.Lreduce64
+.Lfe64_mul_epilogue:
+.cfi_endproc
 .size	x25519_fe64_mul,.-x25519_fe64_mul
 
 .globl	x25519_fe64_sqr
 .type	x25519_fe64_sqr,\@function,2
 .align	32
 x25519_fe64_sqr:
+.cfi_startproc
 	push	%rbp
+.cfi_push	%rbp
 	push	%rbx
+.cfi_push	%rbx
 	push	%r12
+.cfi_push	%r12
 	push	%r13
+.cfi_push	%r13
 	push	%r14
+.cfi_push	%r14
 	push	%r15
+.cfi_push	%r15
 	push	%rdi			# offload dst
+.cfi_push	%rdi
 	lea	-8*2(%rsp),%rsp
+.cfi_adjust_cfa_offset	16
+.Lfe64_sqr_body:
 
 	mov	8*0(%rsi),%rdx		# a[0]
 	mov	8*1(%rsi),%rcx		# a[1]
@@ -637,19 +710,30 @@ x25519_fe64_sqr:
 	mov	$acc0,8*0(%rdi)
 
 	mov	8*3(%rsp),%r15
+.cfi_restore	%r15
 	mov	8*4(%rsp),%r14
+.cfi_restore	%r14
 	mov	8*5(%rsp),%r13
+.cfi_restore	%r13
 	mov	8*6(%rsp),%r12
+.cfi_restore	%r12
 	mov	8*7(%rsp),%rbx
+.cfi_restore	%rbx
 	mov	8*8(%rsp),%rbp
+.cfi_restore	%rbp
 	lea	8*9(%rsp),%rsp
+.cfi_adjust_cfa_offset	88
+.Lfe64_sqr_epilogue:
 	ret
+.cfi_endproc
 .size	x25519_fe64_sqr,.-x25519_fe64_sqr
 
 .globl	x25519_fe64_mul121666
 .type	x25519_fe64_mul121666,\@function,2
 .align	32
 x25519_fe64_mul121666:
+.Lfe64_mul121666_body:
+.cfi_startproc
 	mov	\$121666,%edx
 	mulx	8*0(%rsi),$acc0,%rcx
 	mulx	8*1(%rsi),$acc1,%rax
@@ -676,13 +760,17 @@ x25519_fe64_mul121666:
 	mov	$acc3,8*3(%rdi)
 	mov	$acc0,8*0(%rdi)
 
+.Lfe64_mul121666_epilogue:
 	ret
+.cfi_endproc
 .size	x25519_fe64_mul121666,.-x25519_fe64_mul121666
 
 .globl	x25519_fe64_add
 .type	x25519_fe64_add,\@function,3
 .align	32
 x25519_fe64_add:
+.Lfe64_add_body:
+.cfi_startproc
 	mov	8*0(%rsi),$acc0
 	mov	8*1(%rsi),$acc1
 	mov	8*2(%rsi),$acc2
@@ -698,20 +786,28 @@ x25519_fe64_add:
 
 	add	%rax,$acc0
 	adc	\$0,$acc1
-	mov	$acc0,8*0(%rdi)
 	adc	\$0,$acc2
 	mov	$acc1,8*1(%rdi)
 	adc	\$0,$acc3
 	mov	$acc2,8*2(%rdi)
+	sbb	%rax,%rax		# cf -> mask
 	mov	$acc3,8*3(%rdi)
+	and	\$38,%rax
 
+	add	%rax,$acc0
+	mov	$acc0,8*0(%rdi)
+
+.Lfe64_add_epilogue:
 	ret
+.cfi_endproc
 .size	x25519_fe64_add,.-x25519_fe64_add
 
 .globl	x25519_fe64_sub
 .type	x25519_fe64_sub,\@function,3
 .align	32
 x25519_fe64_sub:
+.Lfe64_sub_body:
+.cfi_startproc
 	mov	8*0(%rsi),$acc0
 	mov	8*1(%rsi),$acc1
 	mov	8*2(%rsi),$acc2
@@ -727,20 +823,28 @@ x25519_fe64_sub:
 
 	sub	%rax,$acc0
 	sbb	\$0,$acc1
-	mov	$acc0,8*0(%rdi)
 	sbb	\$0,$acc2
 	mov	$acc1,8*1(%rdi)
 	sbb	\$0,$acc3
 	mov	$acc2,8*2(%rdi)
+	sbb	%rax,%rax		# cf -> mask
 	mov	$acc3,8*3(%rdi)
+	and	\$38,%rax
 
+	sub	%rax,$acc0
+	mov	$acc0,8*0(%rdi)
+
+.Lfe64_sub_epilogue:
 	ret
+.cfi_endproc
 .size	x25519_fe64_sub,.-x25519_fe64_sub
 
 .globl	x25519_fe64_tobytes
 .type	x25519_fe64_tobytes,\@function,2
 .align	32
 x25519_fe64_tobytes:
+.Lfe64_to_body:
+.cfi_startproc
 	mov	8*0(%rsi),$acc0
 	mov	8*1(%rsi),$acc1
 	mov	8*2(%rsi),$acc2
@@ -751,6 +855,7 @@ x25519_fe64_tobytes:
 	sar	\$63,$acc3		# most significant bit -> mask
 	shr	\$1,%rax		# most significant bit cleared
 	and	\$19,$acc3
+	add	\$19,$acc3		# compare to modulus in the same go
 
 	add	$acc3,$acc0
 	adc	\$0,$acc1
@@ -760,16 +865,22 @@ x25519_fe64_tobytes:
 	lea	(%rax,%rax),$acc3
 	sar	\$63,%rax		# most significant bit -> mask
 	shr	\$1,$acc3		# most significant bit cleared
+	not	%rax
 	and	\$19,%rax
 
-	add	%rax,$acc0
+	sub	%rax,$acc0
+	sbb	\$0,$acc1
+	sbb	\$0,$acc2
+	sbb	\$0,$acc3
 
+	mov	$acc0,8*0(%rdi)
 	mov	$acc1,8*1(%rdi)
 	mov	$acc2,8*2(%rdi)
 	mov	$acc3,8*3(%rdi)
-	mov	$acc0,8*0(%rdi)
 
+.Lfe64_to_epilogue:
 	ret
+.cfi_endproc
 .size	x25519_fe64_tobytes,.-x25519_fe64_tobytes
 ___
 } else {
@@ -778,8 +889,10 @@ $code.=<<___;
 .type	x25519_fe64_eligible,\@abi-omnipotent
 .align	32
 x25519_fe64_eligible:
+.cfi_startproc
 	xor	%eax,%eax
 	ret
+.cfi_endproc
 .size	x25519_fe64_eligible,.-x25519_fe64_eligible
 
 .globl	x25519_fe64_mul
@@ -795,15 +908,233 @@ x25519_fe64_mul121666:
 x25519_fe64_add:
 x25519_fe64_sub:
 x25519_fe64_tobytes:
+.cfi_startproc
 	.byte	0x0f,0x0b	# ud2
 	ret
+.cfi_endproc
 .size	x25519_fe64_mul,.-x25519_fe64_mul
 ___
 }
 $code.=<<___;
-.asciz	"X25519 primitives for x86_64, CRYPTOGAMS by <appro\@openssl.org>"
+.asciz	"X25519 primitives for x86_64, CRYPTOGAMS by <https://github.com/dot-asm>"
 ___
+
+# EXCEPTION_DISPOSITION handler (EXCEPTION_RECORD *rec,ULONG64 frame,
+#		CONTEXT *context,DISPATCHER_CONTEXT *disp)
+if ($win64) {
+$rec="%rcx";
+$frame="%rdx";
+$context="%r8";
+$disp="%r9";
+
+$code.=<<___;
+.extern	__imp_RtlVirtualUnwind
+
+.type	short_handler,\@abi-omnipotent
+.align	16
+short_handler:
+	push	%rsi
+	push	%rdi
+	push	%rbx
+	push	%rbp
+	push	%r12
+	push	%r13
+	push	%r14
+	push	%r15
+	pushfq
+	sub	\$64,%rsp
+
+	mov	120($context),%rax	# pull context->Rax
+	mov	248($context),%rbx	# pull context->Rip
+
+	mov	8($disp),%rsi		# disp->ImageBase
+	mov	56($disp),%r11		# disp->HandlerData
+
+	mov	0(%r11),%r10d		# HandlerData[0]
+	lea	(%rsi,%r10),%r10	# end of prologue label
+	cmp	%r10,%rbx		# context->Rip<end of prologue label
+	jb	.Lcommon_seh_tail
+
+	mov	152($context),%rax	# pull context->Rsp
+	jmp	.Lcommon_seh_tail
+.size	short_handler,.-short_handler
+
+.type	full_handler,\@abi-omnipotent
+.align	16
+full_handler:
+	push	%rsi
+	push	%rdi
+	push	%rbx
+	push	%rbp
+	push	%r12
+	push	%r13
+	push	%r14
+	push	%r15
+	pushfq
+	sub	\$64,%rsp
+
+	mov	120($context),%rax	# pull context->Rax
+	mov	248($context),%rbx	# pull context->Rip
+
+	mov	8($disp),%rsi		# disp->ImageBase
+	mov	56($disp),%r11		# disp->HandlerData
+
+	mov	0(%r11),%r10d		# HandlerData[0]
+	lea	(%rsi,%r10),%r10	# end of prologue label
+	cmp	%r10,%rbx		# context->Rip<end of prologue label
+	jb	.Lcommon_seh_tail
+
+	mov	152($context),%rax	# pull context->Rsp
+
+	mov	4(%r11),%r10d		# HandlerData[1]
+	lea	(%rsi,%r10),%r10	# epilogue label
+	cmp	%r10,%rbx		# context->Rip>=epilogue label
+	jae	.Lcommon_seh_tail
+
+	mov	8(%r11),%r10d		# HandlerData[2]
+	lea	(%rax,%r10),%rax
+
+	mov	-8(%rax),%rbp
+	mov	-16(%rax),%rbx
+	mov	-24(%rax),%r12
+	mov	-32(%rax),%r13
+	mov	-40(%rax),%r14
+	mov	-48(%rax),%r15
+	mov	%rbx,144($context)	# restore context->Rbx
+	mov	%rbp,160($context)	# restore context->Rbp
+	mov	%r12,216($context)	# restore context->R12
+	mov	%r13,224($context)	# restore context->R13
+	mov	%r14,232($context)	# restore context->R14
+	mov	%r15,240($context)	# restore context->R15
+
+.Lcommon_seh_tail:
+	mov	8(%rax),%rdi
+	mov	16(%rax),%rsi
+	mov	%rax,152($context)	# restore context->Rsp
+	mov	%rsi,168($context)	# restore context->Rsi
+	mov	%rdi,176($context)	# restore context->Rdi
+
+	mov	40($disp),%rdi		# disp->ContextRecord
+	mov	$context,%rsi		# context
+	mov	\$154,%ecx		# sizeof(CONTEXT)
+	.long	0xa548f3fc		# cld; rep movsq
+
+	mov	$disp,%rsi
+	xor	%rcx,%rcx		# arg1, UNW_FLAG_NHANDLER
+	mov	8(%rsi),%rdx		# arg2, disp->ImageBase
+	mov	0(%rsi),%r8		# arg3, disp->ControlPc
+	mov	16(%rsi),%r9		# arg4, disp->FunctionEntry
+	mov	40(%rsi),%r10		# disp->ContextRecord
+	lea	56(%rsi),%r11		# &disp->HandlerData
+	lea	24(%rsi),%r12		# &disp->EstablisherFrame
+	mov	%r10,32(%rsp)		# arg5
+	mov	%r11,40(%rsp)		# arg6
+	mov	%r12,48(%rsp)		# arg7
+	mov	%rcx,56(%rsp)		# arg8, (NULL)
+	call	*__imp_RtlVirtualUnwind(%rip)
+
+	mov	\$1,%eax		# ExceptionContinueSearch
+	add	\$64,%rsp
+	popfq
+	pop	%r15
+	pop	%r14
+	pop	%r13
+	pop	%r12
+	pop	%rbp
+	pop	%rbx
+	pop	%rdi
+	pop	%rsi
+	ret
+.size	full_handler,.-full_handler
+
+.section	.pdata
+.align	4
+	.rva	.LSEH_begin_x25519_fe51_mul
+	.rva	.LSEH_end_x25519_fe51_mul
+	.rva	.LSEH_info_x25519_fe51_mul
+
+	.rva	.LSEH_begin_x25519_fe51_sqr
+	.rva	.LSEH_end_x25519_fe51_sqr
+	.rva	.LSEH_info_x25519_fe51_sqr
+
+	.rva	.LSEH_begin_x25519_fe51_mul121666
+	.rva	.LSEH_end_x25519_fe51_mul121666
+	.rva	.LSEH_info_x25519_fe51_mul121666
+___
+$code.=<<___	if ($addx);
+	.rva	.LSEH_begin_x25519_fe64_mul
+	.rva	.LSEH_end_x25519_fe64_mul
+	.rva	.LSEH_info_x25519_fe64_mul
+
+	.rva	.LSEH_begin_x25519_fe64_sqr
+	.rva	.LSEH_end_x25519_fe64_sqr
+	.rva	.LSEH_info_x25519_fe64_sqr
+
+	.rva	.LSEH_begin_x25519_fe64_mul121666
+	.rva	.LSEH_end_x25519_fe64_mul121666
+	.rva	.LSEH_info_x25519_fe64_mul121666
+
+	.rva	.LSEH_begin_x25519_fe64_add
+	.rva	.LSEH_end_x25519_fe64_add
+	.rva	.LSEH_info_x25519_fe64_add
+
+	.rva	.LSEH_begin_x25519_fe64_sub
+	.rva	.LSEH_end_x25519_fe64_sub
+	.rva	.LSEH_info_x25519_fe64_sub
+
+	.rva	.LSEH_begin_x25519_fe64_tobytes
+	.rva	.LSEH_end_x25519_fe64_tobytes
+	.rva	.LSEH_info_x25519_fe64_tobytes
+___
+$code.=<<___;
+.section	.xdata
+.align	8
+.LSEH_info_x25519_fe51_mul:
+	.byte	9,0,0,0
+	.rva	full_handler
+	.rva	.Lfe51_mul_body,.Lfe51_mul_epilogue	# HandlerData[]
+	.long	88,0
+.LSEH_info_x25519_fe51_sqr:
+	.byte	9,0,0,0
+	.rva	full_handler
+	.rva	.Lfe51_sqr_body,.Lfe51_sqr_epilogue	# HandlerData[]
+	.long	88,0
+.LSEH_info_x25519_fe51_mul121666:
+	.byte	9,0,0,0
+	.rva	full_handler
+	.rva	.Lfe51_mul121666_body,.Lfe51_mul121666_epilogue	# HandlerData[]
+	.long	88,0
+___
+$code.=<<___	if ($addx);
+.LSEH_info_x25519_fe64_mul:
+	.byte	9,0,0,0
+	.rva	full_handler
+	.rva	.Lfe64_mul_body,.Lfe64_mul_epilogue	# HandlerData[]
+	.long	72,0
+.LSEH_info_x25519_fe64_sqr:
+	.byte	9,0,0,0
+	.rva	full_handler
+	.rva	.Lfe64_sqr_body,.Lfe64_sqr_epilogue	# HandlerData[]
+	.long	72,0
+.LSEH_info_x25519_fe64_mul121666:
+	.byte	9,0,0,0
+	.rva	short_handler
+	.rva	.Lfe64_mul121666_body,.Lfe64_mul121666_epilogue	# HandlerData[]
+.LSEH_info_x25519_fe64_add:
+	.byte	9,0,0,0
+	.rva	short_handler
+	.rva	.Lfe64_add_body,.Lfe64_add_epilogue	# HandlerData[]
+.LSEH_info_x25519_fe64_sub:
+	.byte	9,0,0,0
+	.rva	short_handler
+	.rva	.Lfe64_sub_body,.Lfe64_sub_epilogue	# HandlerData[]
+.LSEH_info_x25519_fe64_tobytes:
+	.byte	9,0,0,0
+	.rva	short_handler
+	.rva	.Lfe64_to_body,.Lfe64_to_epilogue	# HandlerData[]
+___
+}
 
 $code =~ s/\`([^\`]*)\`/eval $1/gem;
 print $code;
-close STDOUT;
+close STDOUT or die "error closing STDOUT: $!";

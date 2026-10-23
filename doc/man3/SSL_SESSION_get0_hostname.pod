@@ -6,7 +6,7 @@ SSL_SESSION_get0_hostname,
 SSL_SESSION_set1_hostname,
 SSL_SESSION_get0_alpn_selected,
 SSL_SESSION_set1_alpn_selected
-- get and set SNI and ALPN data ssociated with a session
+- get and set SNI and ALPN data associated with a session
 
 =head1 SYNOPSIS
 
@@ -23,8 +23,10 @@ SSL_SESSION_set1_alpn_selected
 
 =head1 DESCRIPTION
 
-SSL_SESSION_get0_hostname() retrieves the SNI value that was sent by the
-client when the session was created, or NULL if no value was sent.
+SSL_SESSION_get0_hostname() retrieves the Server Name Indication (SNI) value
+that was sent by the client when the session was created if the server
+acknowledged the client's SNI extension by including an empty SNI extension
+in response. Otherwise NULL is returned.
 
 The value returned is a pointer to memory maintained within B<s> and
 should not be free'd.
@@ -43,8 +45,7 @@ B<alpn>.
 
 =head1 RETURN VALUES
 
-SSL_SESSION_get0_hostname() returns either a string or NULL based on if there
-is the SNI value sent by client.
+SSL_SESSION_get0_hostname() returns the SNI string if available, or NULL if not.
 
 SSL_SESSION_set1_hostname() returns 1 on success or 0 on error.
 
@@ -59,14 +60,14 @@ L<SSL_SESSION_free(3)>
 
 =head1 HISTORY
 
-SSL_SESSION_set1_hostname(), SSL_SESSION_get0_alpn_selected() and
-SSL_SESSION_set1_alpn_selected() were added in OpenSSL 1.1.1.
+The SSL_SESSION_set1_hostname(), SSL_SESSION_get0_alpn_selected() and
+SSL_SESSION_set1_alpn_selected() functions were added in OpenSSL 1.1.1.
 
 =head1 COPYRIGHT
 
-Copyright 2016-2018 The OpenSSL Project Authors. All Rights Reserved.
+Copyright 2016-2025 The OpenSSL Project Authors. All Rights Reserved.
 
-Licensed under the OpenSSL license (the "License").  You may not use
+Licensed under the Apache License 2.0 (the "License").  You may not use
 this file except in compliance with the License.  You can obtain a copy
 in the file LICENSE in the source distribution or at
 L<https://www.openssl.org/source/license.html>.

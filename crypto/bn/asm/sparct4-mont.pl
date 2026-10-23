@@ -1,7 +1,7 @@
 #! /usr/bin/env perl
-# Copyright 2012-2016 The OpenSSL Project Authors. All Rights Reserved.
+# Copyright 2012-2026 The OpenSSL Project Authors. All Rights Reserved.
 #
-# Licensed under the OpenSSL license (the "License").  You may not use
+# Licensed under the Apache License 2.0 (the "License").  You may not use
 # this file except in compliance with the License.  You can obtain a copy
 # in the file LICENSE in the source distribution or at
 # https://www.openssl.org/source/license.html
@@ -83,11 +83,13 @@ $0 =~ m/(.*[\/\\])[^\/\\]+$/; $dir=$1;
 push(@INC,"${dir}","${dir}../../perlasm");
 require "sparcv9_modes.pl";
 
-$output = pop;
-open STDOUT,">$output";
+$output = pop and open STDOUT,">$output";
 
 $code.=<<___;
-#include "sparc_arch.h"
+#ifndef __ASSEMBLER__
+# define __ASSEMBLER__ 1
+#endif
+#include "arch/sparc_arch.h"
 
 #ifdef	__arch64__
 .register	%g2,#scratch
@@ -888,19 +890,17 @@ $code.=<<___;
 	sub	$tp,	$num,	$tp
 	sub	$rp,	$num,	$rp
 
-	subc	$ovf,	%g0,	$ovf	! handle upmost overflow bit
-	and	$tp,	$ovf,	$ap
-	andn	$rp,	$ovf,	$np
-	or	$np,	$ap,	$ap	! ap=borrow?tp:rp
+	subccc	$ovf,	%g0,	$ovf	! handle upmost overflow bit
 	ba	.Lcopy
 	sub	$num,	8,	$cnt
 
 .align	16
-.Lcopy:					! copy or in-place refresh
-	ldx	[$ap+0],	$t2
-	add	$ap,	8,	$ap
+.Lcopy:					! conditional copy
+	ldx	[$tp],		$tj
+	ldx	[$rp+0],	$t2
 	stx	%g0,	[$tp]		! zap
 	add	$tp,	8,	$tp
+	movcs	%icc,	$tj,	$t2
 	stx	$t2,	[$rp+0]
 	add	$rp,	8,	$rp
 	brnz	$cnt,	.Lcopy
@@ -1136,19 +1136,17 @@ $code.=<<___;
 	sub	$tp,	$num,	$tp
 	sub	$rp,	$num,	$rp
 
-	subc	$ovf,	%g0,	$ovf	! handle upmost overflow bit
-	and	$tp,	$ovf,	$ap
-	andn	$rp,	$ovf,	$np
-	or	$np,	$ap,	$ap	! ap=borrow?tp:rp
+	subccc	$ovf,	%g0,	$ovf	! handle upmost overflow bit
 	ba	.Lcopy_g5
 	sub	$num,	8,	$cnt
 
 .align	16
-.Lcopy_g5:				! copy or in-place refresh
-	ldx	[$ap+0],	$t2
-	add	$ap,	8,	$ap
+.Lcopy_g5:				! conditional copy
+	ldx	[$tp],		$tj
+	ldx	[$rp+0],	$t2
 	stx	%g0,	[$tp]		! zap
 	add	$tp,	8,	$tp
+	movcs	%icc,	$tj,	$t2
 	stx	$t2,	[$rp+0]
 	add	$rp,	8,	$rp
 	brnz	$cnt,	.Lcopy_g5
@@ -1229,4 +1227,4 @@ ___
 
 &emit_assembler();
 
-close STDOUT;
+close STDOUT or die "error closing STDOUT: $!";

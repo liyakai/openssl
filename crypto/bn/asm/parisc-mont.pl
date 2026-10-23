@@ -1,17 +1,17 @@
 #! /usr/bin/env perl
-# Copyright 2009-2016 The OpenSSL Project Authors. All Rights Reserved.
+# Copyright 2009-2025 The OpenSSL Project Authors. All Rights Reserved.
 #
-# Licensed under the OpenSSL license (the "License").  You may not use
+# Licensed under the Apache License 2.0 (the "License").  You may not use
 # this file except in compliance with the License.  You can obtain a copy
 # in the file LICENSE in the source distribution or at
 # https://www.openssl.org/source/license.html
 
 
 # ====================================================================
-# Written by Andy Polyakov <appro@openssl.org> for the OpenSSL
+# Written by Andy Polyakov, @dot-asm, initially for use in the OpenSSL
 # project. The module is, however, dual licensed under OpenSSL and
 # CRYPTOGAMS licenses depending on where you obtain it. For further
-# details see http://www.openssl.org/~appro/cryptogams/.
+# details see https://github.com/dot-asm/cryptogams/.
 # ====================================================================
 
 # On PA-7100LC this module performs ~90-50% better, less for longer
@@ -69,10 +69,12 @@
 
 $0 =~ m/(.*[\/\\])[^\/\\]+$/; $dir=$1;
 
-$flavour = shift;
-$output = shift;
+# $output is the last argument if it looks like a file (it has an extension)
+# $flavour is the first argument if it doesn't look like a file
+$output = $#ARGV >= 0 && $ARGV[$#ARGV] =~ m|\.\w+$| ? pop : undef;
+$flavour = $#ARGV >= 0 && $ARGV[0] !~ m|\.| ? shift : undef;
 
-open STDOUT,">$output";
+$output and open STDOUT,">$output";
 
 if ($flavour =~ /64/) {
 	$LEVEL		="2.0W";
@@ -517,7 +519,6 @@ L\$sub
 	stws,ma		$hi1,4($rp)
 
 	subb		$ti0,%r0,$hi1
-	ldo		-4($tp),$tp
 ___
 $code.=<<___ if ($BN_SZ==8);
 	ldd,ma		8($tp),$ti0
@@ -532,20 +533,18 @@ L\$sub
 
 	extrd,u		$ti0,31,32,$ti0		; carry in flipped word order
 	sub,db		$ti0,%r0,$hi1
-	ldo		-8($tp),$tp
 ___
 $code.=<<___;
-	and		$tp,$hi1,$ap
-	andcm		$rp,$hi1,$bp
-	or		$ap,$bp,$np
-
+	ldo		`$LOCALS+32`($fp),$tp
 	sub		$rp,$arrsz,$rp		; rewind rp
 	subi		0,$arrsz,$idx
-	ldo		`$LOCALS+32`($fp),$tp
 L\$copy
-	ldd		$idx($np),$hi0
+	ldd		0($tp),$ti0
+	ldd		0($rp),$hi0
 	std,ma		%r0,8($tp)
-	addib,<>	8,$idx,.-8		; L\$copy
+	comiclr,=	0,$hi1,%r0
+	copy		$ti0,$hi0
+	addib,<>	8,$idx,L\$copy
 	std,ma		$hi0,8($rp)
 ___
 
@@ -856,17 +855,16 @@ L\$sub_pa11
 	stws,ma		$hi1,4($rp)
 
 	subb		$ti0,%r0,$hi1
-	ldo		-4($tp),$tp
-	and		$tp,$hi1,$ap
-	andcm		$rp,$hi1,$bp
-	or		$ap,$bp,$np
 
+	ldo		`$LOCALS+32`($fp),$tp
 	sub		$rp,$arrsz,$rp		; rewind rp
 	subi		0,$arrsz,$idx
-	ldo		`$LOCALS+32`($fp),$tp
 L\$copy_pa11
-	ldwx		$idx($np),$hi0
+	ldw		0($tp),$ti0
+	ldw		0($rp),$hi0
 	stws,ma		%r0,4($tp)
+	comiclr,=	0,$hi1,%r0
+	copy		$ti0,$hi0
 	addib,<>	4,$idx,L\$copy_pa11
 	stws,ma		$hi0,4($rp)
 
@@ -892,7 +890,7 @@ L\$abort
 	.EXIT
 	$POPMB	-$FRAME(%sp),%r3
 	.PROCEND
-	.STRINGZ "Montgomery Multiplication for PA-RISC, CRYPTOGAMS by <appro\@openssl.org>"
+	.STRINGZ "Montgomery Multiplication for PA-RISC, CRYPTOGAMS by <https://github.com/dot-asm>"
 ___
 
 # Explicitly encode PA-RISC 2.0 instructions used in this module, so
@@ -988,6 +986,11 @@ sub assemble {
     ref($opcode) eq 'CODE' ? &$opcode($mod,$args) : "\t$mnemonic$mod\t$args";
 }
 
+if (`$ENV{CC} -Wa,-v -c -o /dev/null -x assembler /dev/null 2>&1`
+	=~ /GNU assembler/) {
+    $gnuas = 1;
+}
+
 foreach (split("\n",$code)) {
 	s/\`([^\`]*)\`/eval $1/ge;
 	# flip word order in 64-bit mode...
@@ -995,8 +998,11 @@ foreach (split("\n",$code)) {
 	# assemble 2.0 instructions in 32-bit mode...
 	s/^\s+([a-z]+)([\S]*)\s+([\S]*)/&assemble($1,$2,$3)/e if ($BN_SZ==4);
 
-	s/\bbv\b/bve/gm	if ($SIZE_T==8);
+	s/(\.LEVEL\s+2\.0)W/$1w/	if ($gnuas && $SIZE_T==8);
+	s/\.SPACE\s+\$TEXT\$/.text/	if ($gnuas && $SIZE_T==8);
+	s/\.SUBSPA.*//			if ($gnuas && $SIZE_T==8);
+	s/\bbv\b/bve/			if ($SIZE_T==8);
 
 	print $_,"\n";
 }
-close STDOUT;
+close STDOUT or die "error closing STDOUT: $!";

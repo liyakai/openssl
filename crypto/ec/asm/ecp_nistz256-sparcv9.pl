@@ -1,17 +1,17 @@
 #! /usr/bin/env perl
-# Copyright 2015-2016 The OpenSSL Project Authors. All Rights Reserved.
+# Copyright 2015-2026 The OpenSSL Project Authors. All Rights Reserved.
 #
-# Licensed under the OpenSSL license (the "License").  You may not use
+# Licensed under the Apache License 2.0 (the "License").  You may not use
 # this file except in compliance with the License.  You can obtain a copy
 # in the file LICENSE in the source distribution or at
 # https://www.openssl.org/source/license.html
 
 
 # ====================================================================
-# Written by Andy Polyakov <appro@openssl.org> for the OpenSSL
+# Written by Andy Polyakov, @dot-asm, initially for use in the OpenSSL
 # project. The module is, however, dual licensed under OpenSSL and
 # CRYPTOGAMS licenses depending on where you obtain it. For further
-# details see http://www.openssl.org/~appro/cryptogams/.
+# details see https://github.com/dot-asm/cryptogams/.
 # ====================================================================
 #
 # ECP_NISTZ256 module for SPARCv9.
@@ -31,11 +31,13 @@
 # on benchmark. Lower coefficients are for ECDSA sign, server-side
 # operation. Keep in mind that +200% means 3x improvement.
 
-$output = pop;
-open STDOUT,">$output";
+$output = pop and open STDOUT,">$output";
 
 $code.=<<___;
-#include "sparc_arch.h"
+#ifndef __ASSEMBLER__
+# define __ASSEMBLER__ 1
+#endif
+#include "arch/sparc_arch.h"
 
 #define LOCALS	(STACK_BIAS+STACK_FRAME)
 #ifdef	__arch64__
@@ -109,7 +111,7 @@ $code.=<<___;
 .long	0xfffffffe, 0xffffffff, 0xfffffffd, 0x00000004
 .Lone:
 .long	1,0,0,0,0,0,0,0
-.asciz	"ECP_NISTZ256 for SPARCv9, CRYPTOGAMS by <appro\@openssl.org>"
+.asciz	"ECP_NISTZ256 for SPARCv9, CRYPTOGAMS by <https://github.com/dot-asm>"
 
 ! void	ecp_nistz256_to_mont(BN_ULONG %i0[8],const BN_ULONG %i1[8]);
 .globl	ecp_nistz256_to_mont
@@ -1531,13 +1533,13 @@ ecp_nistz256_scatter_w7:
 	ld	[$inp],%l0
 	add	$inp,4,$inp
 	subcc	$index,1,$index
-	stb	%l0,[$out+64*0-1]
+	stb	%l0,[$out+64*0]
 	srl	%l0,8,%l1
-	stb	%l1,[$out+64*1-1]
+	stb	%l1,[$out+64*1]
 	srl	%l0,16,%l2
-	stb	%l2,[$out+64*2-1]
+	stb	%l2,[$out+64*2]
 	srl	%l0,24,%l3
-	stb	%l3,[$out+64*3-1]
+	stb	%l3,[$out+64*3]
 	bne	.Loop_scatter_w7
 	add	$out,64*4,$out
 
@@ -2301,7 +2303,6 @@ my ($Z1sqr, $Z2sqr) = ($Hsqr, $Rsqr);
 # !in1infty, !in2infty and result of check for zero.
 
 $code.=<<___;
-.globl	ecp_nistz256_point_add_vis3
 .align	32
 ecp_nistz256_point_add_vis3:
 	save	%sp,-STACK64_FRAME-32*18-32,%sp
@@ -3058,4 +3059,4 @@ foreach (split("\n",$code)) {
 	print $_,"\n";
 }
 
-close STDOUT;
+close STDOUT or die "error closing STDOUT: $!";

@@ -1,7 +1,7 @@
 /*
- * Copyright 2015-2017 The OpenSSL Project Authors. All Rights Reserved.
+ * Copyright 2015-2026 The OpenSSL Project Authors. All Rights Reserved.
  *
- * Licensed under the OpenSSL license (the "License").  You may not use
+ * Licensed under the Apache License 2.0 (the "License").  You may not use
  * this file except in compliance with the License.  You can obtain a copy
  * in the file LICENSE in the source distribution or at
  * https://www.openssl.org/source/license.html
@@ -10,12 +10,15 @@
 #include <openssl/crypto.h>
 
 #include "testutil.h"
+#include "internal/e_os.h"
 
 static int test_sec_mem(void)
 {
-#if defined(OPENSSL_SYS_LINUX) || defined(OPENSSL_SYS_UNIX)
+#ifndef OPENSSL_NO_SECURE_MEMORY
     int testresult = 0;
     char *p = NULL, *q = NULL, *r = NULL, *s = NULL;
+
+    TEST_info("Secure memory is implemented.");
 
     s = OPENSSL_secure_malloc(20);
     /* s = non-secure 20 */
@@ -78,8 +81,7 @@ static int test_sec_mem(void)
      * If init fails, then initialized should be false, if not, this
      * could cause an infinite loop secure_malloc, but we don't test it
      */
-    if (TEST_false(CRYPTO_secure_malloc_init(16, 16)) &&
-        !TEST_false(CRYPTO_secure_malloc_initialized())) {
+    if (!TEST_true(CRYPTO_secure_malloc_init(16, 16)) && !TEST_false(CRYPTO_secure_malloc_initialized())) {
         TEST_true(CRYPTO_secure_malloc_done());
         goto end;
     }
@@ -89,7 +91,7 @@ static int test_sec_mem(void)
      * elements was 1<<31, as |int i| was set to that, which is a
      * negative number. However, it requires minimum input values:
      *
-     * CRYPTO_secure_malloc_init((size_t)1<<34, (size_t)1<<4);
+     * CRYPTO_secure_malloc_init((size_t)1<<34, 1<<4);
      *
      * Which really only works on 64-bit systems, since it took 16 GB
      * secure memory arena to trigger the problem. It naturally takes
@@ -100,7 +102,7 @@ static int test_sec_mem(void)
      * to make sure that infinite loop is fixed, they can enable the
      * code below.
      */
-# if 0
+#if 0
     /*-
      * On Linux and BSD this test has a chance to complete in minimal
      * time and with minimum side effects, because mlock is likely to
@@ -110,27 +112,71 @@ static int test_sec_mem(void)
      */
     if (sizeof(size_t) > 4) {
         TEST_info("Possible infinite loop: 1<<31 limit");
-        if (TEST_true(CRYPTO_secure_malloc_init((size_t)1<<34, (size_t)1<<4) != 0))
+        if (TEST_true(CRYPTO_secure_malloc_init((size_t)1<<34, 1<<4) != 0))
             TEST_true(CRYPTO_secure_malloc_done());
     }
-# endif
+#endif
 
     /* this can complete - it was not really secure */
     testresult = 1;
- end:
+end:
     OPENSSL_secure_free(p);
     OPENSSL_free(q);
     OPENSSL_secure_free(r);
     OPENSSL_secure_free(s);
     return testresult;
 #else
+    TEST_info("Secure memory is *not* implemented.");
     /* Should fail. */
     return TEST_false(CRYPTO_secure_malloc_init(4096, 32));
+#endif
+}
+
+static int test_sec_mem_clear(void)
+{
+#ifndef OPENSSL_NO_SECURE_MEMORY
+    const int size = 64;
+    unsigned char *p = NULL;
+    int i, res = 0;
+
+    if (!TEST_true(CRYPTO_secure_malloc_init(4096, 32))
+        || !TEST_ptr(p = OPENSSL_secure_malloc(size)))
+        goto err;
+
+    for (i = 0; i < size; i++)
+        if (!TEST_uchar_eq(p[i], 0))
+            goto err;
+
+    for (i = 0; i < size; i++)
+        p[i] = (unsigned char)(i + ' ' + 1);
+
+    OPENSSL_secure_free(p);
+
+    /*
+     * A deliberate use after free here to verify that the memory has been
+     * cleared properly.  Since secure free doesn't return the memory to
+     * libc's memory pool, it technically isn't freed.  However, the header
+     * bytes have to be skipped and these consist of two pointers in the
+     * current implementation.
+     */
+    for (i = sizeof(void *) * 2; i < size; i++)
+        if (!TEST_uchar_eq(p[i], 0))
+            return 0;
+
+    res = 1;
+    p = NULL;
+err:
+    OPENSSL_secure_free(p);
+    CRYPTO_secure_malloc_done();
+    return res;
+#else
+    return 1;
 #endif
 }
 
 int setup_tests(void)
 {
     ADD_TEST(test_sec_mem);
+    ADD_TEST(test_sec_mem_clear);
     return 1;
 }

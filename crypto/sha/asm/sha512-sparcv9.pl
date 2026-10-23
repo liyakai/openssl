@@ -1,17 +1,17 @@
 #! /usr/bin/env perl
-# Copyright 2007-2016 The OpenSSL Project Authors. All Rights Reserved.
+# Copyright 2007-2026 The OpenSSL Project Authors. All Rights Reserved.
 #
-# Licensed under the OpenSSL license (the "License").  You may not use
+# Licensed under the Apache License 2.0 (the "License").  You may not use
 # this file except in compliance with the License.  You can obtain a copy
 # in the file LICENSE in the source distribution or at
 # https://www.openssl.org/source/license.html
 
 
 # ====================================================================
-# Written by Andy Polyakov <appro@openssl.org> for the OpenSSL
+# Written by Andy Polyakov, @dot-asm, initially for use in the OpenSSL
 # project. The module is, however, dual licensed under OpenSSL and
 # CRYPTOGAMS licenses depending on where you obtain it. For further
-# details see http://www.openssl.org/~appro/cryptogams/.
+# details see https://github.com/dot-asm/cryptogams/.
 #
 # Hardware SPARC T4 support by David S. Miller
 # ====================================================================
@@ -27,7 +27,7 @@
 # over 2x than 32-bit code. X[16] resides on stack, but access to it
 # is scheduled for L2 latency and staged through 32 least significant
 # bits of %l0-%l7. The latter is done to achieve 32-/64-bit ABI
-# duality. Nevetheless it's ~40% faster than SHA256, which is pretty
+# duality. Nevertheless it's ~40% faster than SHA256, which is pretty
 # good [optimal coefficient is 50%].
 #
 # SHA512 on UltraSPARC T1.
@@ -56,8 +56,10 @@
 # saturates at 11.5x single-process result on 8-core processor, or
 # ~11/16GBps per 2.85GHz socket.
 
-$output=pop;
-open STDOUT,">$output";
+# $output is the last argument if it looks like a file (it has an extension)
+$output = $#ARGV >= 0 && $ARGV[$#ARGV] =~ m|\.\w+$| ? pop : undef;
+
+$output and open STDOUT,">$output";
 
 if ($output =~ /512/) {
 	$label="512";
@@ -392,7 +394,10 @@ ___
 } if ($SZ==8);
 
 $code.=<<___;
-#include "sparc_arch.h"
+#ifndef __ASSEMBLER__
+# define __ASSEMBLER__ 1
+#endif
+#include "arch/sparc_arch.h"
 
 #ifdef __arch64__
 .register	%g2,#scratch
@@ -792,7 +797,7 @@ $code.=<<___;
 	restore
 .type	sha${label}_block_data_order,#function
 .size	sha${label}_block_data_order,(.-sha${label}_block_data_order)
-.asciz	"SHA${label} block transform for SPARCv9, CRYPTOGAMS by <appro\@openssl.org>"
+.asciz	"SHA${label} block transform for SPARCv9, CRYPTOGAMS by <https://github.com/dot-asm>"
 .align	4
 ___
 
@@ -854,4 +859,4 @@ foreach (split("\n",$code)) {
 	print $_,"\n";
 }
 
-close STDOUT;
+close STDOUT or die "error closing STDOUT: $!";

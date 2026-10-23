@@ -1,17 +1,17 @@
 #! /usr/bin/env perl
-# Copyright 2006-2016 The OpenSSL Project Authors. All Rights Reserved.
+# Copyright 2006-2025 The OpenSSL Project Authors. All Rights Reserved.
 #
-# Licensed under the OpenSSL license (the "License").  You may not use
+# Licensed under the Apache License 2.0 (the "License").  You may not use
 # this file except in compliance with the License.  You can obtain a copy
 # in the file LICENSE in the source distribution or at
 # https://www.openssl.org/source/license.html
 
 #
 # ====================================================================
-# Written by Andy Polyakov <appro@openssl.org> for the OpenSSL
+# Written by Andy Polyakov, @dot-asm, initially for use in the OpenSSL
 # project. The module is, however, dual licensed under OpenSSL and
 # CRYPTOGAMS licenses depending on where you obtain it. For further
-# details see http://www.openssl.org/~appro/cryptogams/.
+# details see https://github.com/dot-asm/cryptogams/.
 # ====================================================================
 #
 # Wrapper around 'rep montmul', VIA-specific instruction accessing
@@ -88,8 +88,7 @@ $0 =~ m/(.*[\/\\])[^\/\\]+$/; $dir=$1;
 push(@INC,"${dir}","${dir}../../perlasm");
 require "x86asm.pl";
 
-$output = pop;
-open STDOUT,">$output";
+$output = pop and open STDOUT,">$output";
 
 &asm_init($ARGV[0]);
 
@@ -213,18 +212,15 @@ $sp=&DWP(28,"esp");
 
 	&mov	("eax",&DWP(0,"esi","edx",4));	# upmost overflow bit
 	&sbb	("eax",0);
-	&and	("esi","eax");
-	&not	("eax");
-	&mov	("ebp","edi");
-	&and	("ebp","eax");
-	&or	("esi","ebp");			# tp=carry?tp:rp
 
 	&mov	("ecx","edx");			# num
-	&xor	("edx","edx");			# i=0
+	&mov	("edx",0);			# i=0
 
 &set_label("copy",8);
-	&mov	("eax",&DWP(0,"esi","edx",4));
-	&mov	(&DWP(64,"esp","edx",4),"ecx");	# zap tp
+	&mov	("ebx",&DWP(0,"esi","edx",4));
+	&mov	("eax",&DWP(0,"edi","edx",4));
+	&mov	(&DWP(0,"esi","edx",4),"ecx");	# zap tp
+	&cmovc	("eax","ebx");
 	&mov	(&DWP(0,"edi","edx",4),"eax");
 	&lea	("edx",&DWP(1,"edx"));		# i++
 	&loop	(&label("copy"));
@@ -247,8 +243,8 @@ $sp=&DWP(28,"esp");
 &set_label("leave");
 &function_end($func);
 
-&asciz("Padlock Montgomery Multiplication, CRYPTOGAMS by <appro\@openssl.org>");
+&asciz("Padlock Montgomery Multiplication, CRYPTOGAMS by <https://github.com/dot-asm>");
 
 &asm_finish();
 
-close STDOUT;
+close STDOUT or die "error closing STDOUT: $!";

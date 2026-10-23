@@ -1,12 +1,22 @@
 /*
- * Copyright 1995-2018 The OpenSSL Project Authors. All Rights Reserved.
+ * Copyright 1995-2026 The OpenSSL Project Authors. All Rights Reserved.
  *
- * Licensed under the OpenSSL license (the "License").  You may not use
+ * Licensed under the Apache License 2.0 (the "License").  You may not use
  * this file except in compliance with the License.  You can obtain a copy
  * in the file LICENSE in the source distribution or at
  * https://www.openssl.org/source/license.html
  */
 
+#if defined(__TANDEM) && defined(_SPT_MODEL_)
+/*
+ * These definitions have to come first in SPT due to scoping of the
+ * declarations in c99 associated with SPT use of stat.
+ */
+#include <sys/types.h>
+#include <sys/stat.h>
+#endif
+
+#include "internal/e_os.h"
 #include "internal/cryptlib.h"
 
 #include <errno.h>
@@ -19,22 +29,21 @@
 #include <openssl/buffer.h>
 
 #ifdef OPENSSL_SYS_VMS
-# include <unixio.h>
+#include <unixio.h>
 #endif
 #include <sys/types.h>
 #ifndef OPENSSL_NO_POSIX_IO
-# include <sys/stat.h>
-# include <fcntl.h>
-# ifdef _WIN32
-#  include <windows.h>
-#  include <io.h>
-#  define stat    _stat
-#  define chmod   _chmod
-#  define open    _open
-#  define fdopen  _fdopen
-#  define fstat   _fstat
-#  define fileno  _fileno
-# endif
+#include <sys/stat.h>
+#include <fcntl.h>
+#if defined(_WIN32)
+#include <io.h>
+#define stat _stat
+#define chmod _chmod
+#define open _open
+#define fdopen _fdopen
+#define fstat _fstat
+#define fileno _fileno
+#endif
 #endif
 
 /*
@@ -44,11 +53,11 @@
  * would look like ((m) & MASK == TYPE), but since MASK availability
  * is as questionable, we settle for this poor-man fallback...
  */
-# if !defined(S_ISREG)
-#   define S_ISREG(m) ((m) & S_IFREG)
-# endif
+#if !defined(S_ISREG)
+#define S_ISREG(m) ((m) & S_IFREG)
+#endif
 
-#define RAND_FILE_SIZE 1024
+#define RAND_BUF_SIZE 1024
 #define RFILE ".rnd"
 
 #ifdef OPENSSL_SYS_VMS
@@ -60,11 +69,11 @@
  * This declaration is a nasty hack to get around vms' extension to fopen for
  * passing in sharing options being disabled by /STANDARD=ANSI89
  */
-static __FILE_ptr32 (*const vms_fopen)(const char *, const char *, ...) =
-        (__FILE_ptr32 (*)(const char *, const char *, ...))fopen;
-# define VMS_OPEN_ATTRS \
-        "shr=get,put,upd,del","ctx=bin,stm","rfm=stm","rat=none","mrs=0"
-# define openssl_fopen(fname, mode) vms_fopen((fname), (mode), VMS_OPEN_ATTRS)
+static __FILE_ptr32 (*const vms_fopen)(const char *, const char *, ...)
+    = (__FILE_ptr32 (*)(const char *, const char *, ...))fopen;
+#define VMS_OPEN_ATTRS \
+    "shr=get,put,upd,del", "ctx=bin,stm", "rfm=stm", "rat=none", "mrs=0"
+#define openssl_fopen(fname, mode) vms_fopen((fname), (mode), VMS_OPEN_ATTRS)
 #endif
 
 /*
@@ -74,7 +83,16 @@ static __FILE_ptr32 (*const vms_fopen)(const char *, const char *, ...) =
  */
 int RAND_load_file(const char *file, long bytes)
 {
-    unsigned char buf[RAND_FILE_SIZE];
+    /*
+     * The load buffer size exceeds the chunk size by the comfortable amount
+     * of 'RAND_DRBG_STRENGTH' bytes (not bits!). This is done on purpose
+     * to avoid calling RAND_add() with a small final chunk. Instead, such
+     * a small final chunk will be added together with the previous chunk
+     * (unless it's the only one).
+     */
+#define RAND_LOAD_BUF_SIZE (RAND_BUF_SIZE + RAND_DRBG_STRENGTH)
+    unsigned char buf[RAND_LOAD_BUF_SIZE];
+
 #ifndef OPENSSL_NO_POSIX_IO
     struct stat sb;
 #endif
@@ -85,21 +103,25 @@ int RAND_load_file(const char *file, long bytes)
         return 0;
 
     if ((in = openssl_fopen(file, "rb")) == NULL) {
-        RANDerr(RAND_F_RAND_LOAD_FILE, RAND_R_CANNOT_OPEN_FILE);
-        ERR_add_error_data(2, "Filename=", file);
+        ERR_raise_data(ERR_LIB_RAND, RAND_R_CANNOT_OPEN_FILE,
+            "Filename=%s", file);
         return -1;
     }
 
 #ifndef OPENSSL_NO_POSIX_IO
     if (fstat(fileno(in), &sb) < 0) {
-        RANDerr(RAND_F_RAND_LOAD_FILE, RAND_R_INTERNAL_ERROR);
-        ERR_add_error_data(2, "Filename=", file);
+        ERR_raise_data(ERR_LIB_RAND, RAND_R_INTERNAL_ERROR,
+            "Filename=%s", file);
         fclose(in);
         return -1;
     }
 
-    if (!S_ISREG(sb.st_mode) && bytes < 0)
-        bytes = 256;
+    if (bytes < 0) {
+        if (S_ISREG(sb.st_mode))
+            bytes = sb.st_size;
+        else
+            bytes = RAND_DRBG_STRENGTH;
+    }
 #endif
     /*
      * On VMS, setbuf() will only take 32-bit pointers, and a compilation
@@ -109,8 +131,8 @@ int RAND_load_file(const char *file, long bytes)
      * temporarily.
      */
 #if defined(OPENSSL_SYS_VMS) && defined(__DECC)
-# pragma environment save
-# pragma message disable maylosedata2
+#pragma environment save
+#pragma message disable maylosedata2
 #endif
     /*
      * Don't buffer, because even if |file| is regular file, we have
@@ -119,17 +141,17 @@ int RAND_load_file(const char *file, long bytes)
      */
     setbuf(in, NULL);
 #if defined(OPENSSL_SYS_VMS) && defined(__DECC)
-# pragma environment restore
+#pragma environment restore
 #endif
 
-    for ( ; ; ) {
+    for (;;) {
         if (bytes > 0)
-            n = (bytes < RAND_FILE_SIZE) ? (int)bytes : RAND_FILE_SIZE;
+            n = (bytes <= RAND_LOAD_BUF_SIZE) ? (int)bytes : RAND_BUF_SIZE;
         else
-            n = RAND_FILE_SIZE;
-        i = fread(buf, 1, n, in);
+            n = RAND_LOAD_BUF_SIZE;
+        i = (int)fread(buf, 1, n, in);
 #ifdef EINTR
-        if (ferror(in) && errno == EINTR){
+        if (ferror(in) && errno == EINTR) {
             clearerr(in);
             if (i == 0)
                 continue;
@@ -144,45 +166,61 @@ int RAND_load_file(const char *file, long bytes)
         /* If given a bytecount, and we did it, break. */
         if (bytes > 0 && (bytes -= i) <= 0)
             break;
+
+        /* We can hit a signed integer overflow on the next iteration */
+        if (ret > INT_MAX - RAND_LOAD_BUF_SIZE)
+            break;
     }
 
     OPENSSL_cleanse(buf, sizeof(buf));
     fclose(in);
+    if (!RAND_status()) {
+        ERR_raise_data(ERR_LIB_RAND, RAND_R_RESEED_ERROR, "Filename=%s", file);
+        return -1;
+    }
+
     return ret;
 }
 
 int RAND_write_file(const char *file)
 {
-    unsigned char buf[RAND_FILE_SIZE];
+    unsigned char buf[RAND_BUF_SIZE];
     int ret = -1;
     FILE *out = NULL;
 #ifndef OPENSSL_NO_POSIX_IO
     struct stat sb;
 
     if (stat(file, &sb) >= 0 && !S_ISREG(sb.st_mode)) {
-        RANDerr(RAND_F_RAND_WRITE_FILE, RAND_R_NOT_A_REGULAR_FILE);
-        ERR_add_error_data(2, "Filename=", file);
+        ERR_raise_data(ERR_LIB_RAND, RAND_R_NOT_A_REGULAR_FILE,
+            "Filename=%s", file);
         return -1;
     }
 #endif
 
     /* Collect enough random data. */
     if (RAND_priv_bytes(buf, (int)sizeof(buf)) != 1)
-        return  -1;
+        return -1;
 
-#if defined(O_CREAT) && !defined(OPENSSL_NO_POSIX_IO) && \
-    !defined(OPENSSL_SYS_VMS) && !defined(OPENSSL_SYS_WINDOWS)
+#if defined(O_CREAT) && !defined(OPENSSL_NO_POSIX_IO) && !defined(OPENSSL_SYS_VMS) && !defined(OPENSSL_SYS_WINDOWS)
     {
-# ifndef O_BINARY
-#  define O_BINARY 0
-# endif
+#ifndef O_BINARY
+#define O_BINARY 0
+#endif
         /*
          * chmod(..., 0600) is too late to protect the file, permissions
          * should be restrictive from the start
          */
         int fd = open(file, O_WRONLY | O_CREAT | O_BINARY, 0600);
-        if (fd != -1)
+
+        if (fd != -1) {
             out = fdopen(fd, "wb");
+            if (out == NULL) {
+                close(fd);
+                ERR_raise_data(ERR_LIB_RAND, RAND_R_CANNOT_OPEN_FILE,
+                    "Filename=%s", file);
+                return -1;
+            }
+        }
     }
 #endif
 
@@ -210,8 +248,8 @@ int RAND_write_file(const char *file)
     if (out == NULL)
         out = openssl_fopen(file, "wb");
     if (out == NULL) {
-        RANDerr(RAND_F_RAND_WRITE_FILE, RAND_R_CANNOT_OPEN_FILE);
-        ERR_add_error_data(2, "Filename=", file);
+        ERR_raise_data(ERR_LIB_RAND, RAND_R_CANNOT_OPEN_FILE,
+            "Filename=%s", file);
         return -1;
     }
 
@@ -222,9 +260,9 @@ int RAND_write_file(const char *file)
     chmod(file, 0600);
 #endif
 
-    ret = fwrite(buf, 1, RAND_FILE_SIZE, out);
+    ret = (int)fwrite(buf, 1, RAND_BUF_SIZE, out);
     fclose(out);
-    OPENSSL_cleanse(buf, RAND_FILE_SIZE);
+    OPENSSL_cleanse(buf, RAND_BUF_SIZE);
     return ret;
 }
 
@@ -242,8 +280,9 @@ const char *RAND_file_name(char *buf, size_t size)
     if ((envlen = GetEnvironmentVariableW(var = L"RANDFILE", NULL, 0)) == 0) {
         use_randfile = 0;
         if ((envlen = GetEnvironmentVariableW(var = L"HOME", NULL, 0)) == 0
-                && (envlen = GetEnvironmentVariableW(var = L"USERPROFILE",
-                                                  NULL, 0)) == 0)
+            && (envlen = GetEnvironmentVariableW(var = L"USERPROFILE",
+                    NULL, 0))
+                == 0)
             envlen = GetEnvironmentVariableW(var = L"SYSTEMROOT", NULL, 0);
     }
 
@@ -253,20 +292,20 @@ const char *RAND_file_name(char *buf, size_t size)
         WCHAR *val = _alloca(envlen * sizeof(WCHAR));
 
         if (GetEnvironmentVariableW(var, val, envlen) < envlen
-                && (sz = WideCharToMultiByte(CP_UTF8, 0, val, -1, NULL, 0,
-                                             NULL, NULL)) != 0) {
+            && (sz = WideCharToMultiByte(CP_UTF8, 0, val, -1, NULL, 0,
+                    NULL, NULL))
+                != 0) {
             s = _alloca(sz);
             if (WideCharToMultiByte(CP_UTF8, 0, val, -1, s, sz,
-                                    NULL, NULL) == 0)
+                    NULL, NULL)
+                == 0)
                 s = NULL;
         }
     }
 #else
-    if (OPENSSL_issetugid() != 0) {
+    if ((s = ossl_safe_getenv("RANDFILE")) == NULL || *s == '\0') {
         use_randfile = 0;
-    } else if ((s = getenv("RANDFILE")) == NULL || *s == '\0') {
-        use_randfile = 0;
-        s = getenv("HOME");
+        s = ossl_safe_getenv("HOME");
     }
 #endif
 

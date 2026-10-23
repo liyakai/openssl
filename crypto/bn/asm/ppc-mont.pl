@@ -1,17 +1,17 @@
 #! /usr/bin/env perl
-# Copyright 2006-2016 The OpenSSL Project Authors. All Rights Reserved.
+# Copyright 2006-2025 The OpenSSL Project Authors. All Rights Reserved.
 #
-# Licensed under the OpenSSL license (the "License").  You may not use
+# Licensed under the Apache License 2.0 (the "License").  You may not use
 # this file except in compliance with the License.  You can obtain a copy
 # in the file LICENSE in the source distribution or at
 # https://www.openssl.org/source/license.html
 
 
 # ====================================================================
-# Written by Andy Polyakov <appro@openssl.org> for the OpenSSL
+# Written by Andy Polyakov, @dot-asm, initially for use in the OpenSSL
 # project. The module is, however, dual licensed under OpenSSL and
 # CRYPTOGAMS licenses depending on where you obtain it. For further
-# details see http://www.openssl.org/~appro/cryptogams/.
+# details see https://github.com/dot-asm/cryptogams/.
 # ====================================================================
 
 # April 2006
@@ -41,7 +41,10 @@
 # builds. On low-end 32-bit processors performance improvement turned
 # to be marginal...
 
-$flavour = shift;
+# $output is the last argument if it looks like a file (it has an extension)
+# $flavour is the first argument if it doesn't look like a file
+$output = $#ARGV >= 0 && $ARGV[$#ARGV] =~ m|\.\w+$| ? pop : undef;
+$flavour = $#ARGV >= 0 && $ARGV[0] !~ m|\.| ? shift : undef;
 
 if ($flavour =~ /32/) {
 	$BITS=	32;
@@ -94,7 +97,8 @@ $0 =~ m/(.*[\/\\])[^\/\\]+$/; $dir=$1;
 ( $xlate="${dir}../../perlasm/ppc-xlate.pl" and -f $xlate) or
 die "can't locate ppc-xlate.pl";
 
-open STDOUT,"| $^X $xlate $flavour ".shift || die "can't call $xlate: $!";
+open STDOUT,"| $^X $xlate $flavour \"$output\""
+    or die "can't call $xlate: $!";
 
 $sp="r1";
 $toc="r2";
@@ -314,15 +318,16 @@ Lsub:	$LDX	$tj,$tp,$j
 	li	$j,0
 	mtctr	$num
 	subfe	$ovf,$j,$ovf	; handle upmost overflow bit
-	and	$ap,$tp,$ovf
-	andc	$np,$rp,$ovf
-	or	$ap,$ap,$np	; ap=borrow?tp:rp
 
 .align	4
-Lcopy:				; copy or in-place refresh
-	$LDX	$tj,$ap,$j
-	$STX	$tj,$rp,$j
+Lcopy:				; conditional copy
+	$LDX	$tj,$tp,$j
+	$LDX	$aj,$rp,$j
+	and	$tj,$tj,$ovf
+	andc	$aj,$aj,$ovf
 	$STX	$j,$tp,$j	; zap at once
+	or	$aj,$aj,$tj
+	$STX	$aj,$rp,$j
 	addi	$j,$j,$BNSZ
 	bdnz	Lcopy
 
@@ -1981,9 +1986,9 @@ $code.=<<___;
 ___
 }
 $code.=<<___;
-.asciz  "Montgomery Multiplication for PPC, CRYPTOGAMS by <appro\@openssl.org>"
+.asciz  "Montgomery Multiplication for PPC, CRYPTOGAMS by <https://github.com/dot-asm>"
 ___
 
 $code =~ s/\`([^\`]*)\`/eval $1/gem;
 print $code;
-close STDOUT;
+close STDOUT or die "error closing STDOUT: $!";

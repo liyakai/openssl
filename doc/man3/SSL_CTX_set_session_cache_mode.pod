@@ -8,8 +8,8 @@ SSL_CTX_set_session_cache_mode, SSL_CTX_get_session_cache_mode - enable/disable 
 
  #include <openssl/ssl.h>
 
- long SSL_CTX_set_session_cache_mode(SSL_CTX ctx, long mode);
- long SSL_CTX_get_session_cache_mode(SSL_CTX ctx);
+ long SSL_CTX_set_session_cache_mode(SSL_CTX *ctx, long mode);
+ long SSL_CTX_get_session_cache_mode(SSL_CTX *ctx);
 
 =head1 DESCRIPTION
 
@@ -46,6 +46,12 @@ The following session cache modes and modifiers are available:
 =item SSL_SESS_CACHE_OFF
 
 No session caching for client or server takes place.
+
+For a server, setting B<SSL_SESS_CACHE_OFF> together with the
+B<SSL_OP_NO_TICKET> option (see L<SSL_CTX_set_options(3)>) suppresses the
+issuance of B<NewSessionTicket> messages. The combination indicates a clear
+intent to disable session resumption, so no stateful or stateless tickets are
+sent to the client.
 
 =item SSL_SESS_CACHE_CLIENT
 
@@ -96,7 +102,7 @@ session caching (callback) that is configured for the SSL_CTX. This flag will
 prevent sessions being stored in the internal cache (though the application can
 add them manually using L<SSL_CTX_add_session(3)>). Note:
 in any SSL/TLS servers where external caching is configured, any successful
-session lookups in the external cache (ie. for session-resume requests) would
+session lookups in the external cache (i.e. for session-resume requests) would
 normally be copied into the local cache before processing continues - this flag
 prevents these additions to the internal cache as well.
 
@@ -105,6 +111,11 @@ prevents these additions to the internal cache as well.
 Enable both SSL_SESS_CACHE_NO_INTERNAL_LOOKUP and
 SSL_SESS_CACHE_NO_INTERNAL_STORE at the same time.
 
+=item SSL_SESS_CACHE_UPDATE_TIME
+
+Updates the timestamp of the session when it is used, increasing the lifespan
+of the session. The session timeout applies to last use, rather then creation
+time.
 
 =back
 
@@ -131,9 +142,9 @@ L<SSL_CTX_flush_sessions(3)>
 
 =head1 COPYRIGHT
 
-Copyright 2001-2016 The OpenSSL Project Authors. All Rights Reserved.
+Copyright 2001-2026 The OpenSSL Project Authors. All Rights Reserved.
 
-Licensed under the OpenSSL license (the "License").  You may not use
+Licensed under the Apache License 2.0 (the "License").  You may not use
 this file except in compliance with the License.  You can obtain a copy
 in the file LICENSE in the source distribution or at
 L<https://www.openssl.org/source/license.html>.
